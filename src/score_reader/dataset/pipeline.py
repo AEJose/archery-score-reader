@@ -1,9 +1,9 @@
 import json
 import random
-import shutil
 from pathlib import Path
 
 from score_reader.dataset.generator.ground_truth_generator import GroundTruthGenerator
+from score_reader.dataset.generator.sheet_renderer import SheetRenderer
 from score_reader.dataset.models import SyntheticSheet
 
 
@@ -20,6 +20,7 @@ class DatasetPipeline:
 
         rng = random.Random(self.seed)
         generator = GroundTruthGenerator(rng)
+        renderer = SheetRenderer()
 
         images_dir = self.output_dir / "images" / "train"
         labels_dir = self.output_dir / "labels" / "train"
@@ -34,7 +35,7 @@ class DatasetPipeline:
                 sheet = SyntheticSheet(image_id=image_id, seed=self.seed + i, targets=targets)
 
                 image_path = images_dir / f"{image_id}.png"
-                shutil.copy2(self.template_image, image_path)
+                renderer.render(self.template_image, image_path, targets)
 
                 label_path = labels_dir / f"{image_id}.json"
                 label_path.write_text(json.dumps(sheet.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
