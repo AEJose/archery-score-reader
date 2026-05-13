@@ -26,6 +26,7 @@ class SheetRenderer:
     def __init__(self, seed: int = 20260513) -> None:
         self._rng = random.Random(seed)
         self._font_candidates = self._load_handwriting_fonts()
+        self._fallback_font = self._find_fallback_font()
 
     def render(self, template_image: Path, output_image: Path, targets: list[SyntheticTarget]) -> None:
         image = Image.open(template_image).convert("RGB")
@@ -229,15 +230,34 @@ class SheetRenderer:
                     matches.append(path)
         return matches
 
+
+    def _find_fallback_font(self) -> Path | None:
+        fallback_names = (
+            "DejaVuSans.ttf",
+            "DejaVuSerif.ttf",
+            "NotoSansCJK-Regular.ttc",
+            "NotoSansCJKtc-Regular.otf",
+            "Arial.ttf",
+        )
+        search_roots = [Path("/usr/share/fonts"), Path("/usr/local/share/fonts"), Path.home() / ".fonts"]
+        for root in search_roots:
+            if not root.exists():
+                continue
+            for name in fallback_names:
+                matches = list(root.rglob(name))
+                if matches:
+                    return matches[0]
+        return None
+
     def _create_writer_style(self) -> dict[str, object]:
         return {
-            "size_scale": self._rng.uniform(0.92, 1.18),
-            "size_boost": self._rng.uniform(1.0, 1.8),
+            "size_scale": self._rng.uniform(1.00, 1.42),
+            "size_boost": self._rng.uniform(1.3, 2.2),
             "rotation": self._rng.uniform(-8.0, 8.0),
             "x_jitter": self._rng.uniform(-4.2, 4.2),
             "y_jitter": self._rng.uniform(-3.5, 3.5),
             "overflow_prob": self._rng.uniform(0.20, 0.45),
-            "overflow_px": self._rng.uniform(0.5, 3.0),
+            "overflow_px": self._rng.uniform(1.5, 6.0),
             "ink": (self._rng.randint(18, 40), self._rng.randint(18, 40), self._rng.randint(18, 50), self._rng.randint(225, 255)),
             "font_path": self._rng.choice(self._font_candidates) if self._font_candidates else None,
         }
@@ -246,17 +266,25 @@ class SheetRenderer:
         cell_h = max(12, cell.bottom - cell.top)
         scale = float(writer_style["size_scale"])
         size_boost = float(writer_style["size_boost"])
-        base_size = cell_h * 0.68 * scale
-        target_size = max(11, int(base_size * 2.0 * size_boost))
+        base_size = cell_h * 0.92 * scale
+        target_size = max(15, int(base_size * size_boost))
 
         if self._rng.random() < float(writer_style["overflow_prob"]):
-            target_size = int(target_size * self._rng.uniform(1.02, 1.10))
-        font_path = writer_style.get("font_path")
-        if isinstance(font_path, Path):
+            target_size = int(target_size * self._rng.uniform(1.08, 1.25))
+
+        preferred = writer_style.get("font_path")
+        candidate_paths: list[Path] = []
+        if isinstance(preferred, Path):
+            candidate_paths.append(preferred)
+        if self._fallback_font is not None:
+            candidate_paths.append(self._fallback_font)
+
+        for font_path in candidate_paths:
             try:
                 return ImageFont.truetype(str(font_path), target_size)
             except OSError:
-                pass
+                continue
+
         return ImageFont.load_default()
 
     def _draw_cell_text(self, layer: Image.Image, cell: Cell, value: str, writer_style: dict[str, object]) -> None:
