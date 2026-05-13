@@ -1677,10 +1677,10 @@ Given a folder with 10 supported image files, the system processes all files and
 
 System writes `raw_player_scores.csv`.
 
-If each image has 4 players, each player has 6 ends, and each end has 3 arrows, then 10 images should produce:
+If each image has 4 players, each player has 6 ends, and each end has 6 arrows, then 10 images should produce:
 
 ```text
-10 * 4 * 6 * 3 = 720 rows
+10 * 4 * 6 * 6 = 1440 rows
 ```
 
 ### AC-003: Total Scores Output

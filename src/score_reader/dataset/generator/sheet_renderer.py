@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from score_reader.dataset.models import SyntheticTarget
@@ -38,17 +40,25 @@ class SheetRenderer:
     def _detect_cells(self, image: Image.Image) -> list[Cell]:
         gray = image.convert("L")
         w, h = gray.size
+        arr = np.array(gray)
+
+        # Step 1: Find 4 scoring regions via OpenCV contours
+        regions = self._detect_target_regions(arr)
+        if len(regions) != 4:
+            return []
+
+        # Step 2: Find grid lines via dark-pixel scanning
         px = gray.load()
 
         dark_cols = []
         for x in range(w):
-            dark_count = sum(1 for y in range(h) if px[x, y] < 110)
+            dark_count = sum(1 for y in range(h) if px[x, y] < 130)
             if dark_count > h * 0.20:
                 dark_cols.append(x)
 
         dark_rows = []
         for y in range(h):
-            dark_count = sum(1 for x in range(w) if px[x, y] < 110)
+            dark_count = sum(1 for x in range(w) if px[x, y] < 130)
             if dark_count > w * 0.20:
                 dark_rows.append(y)
 
@@ -57,15 +67,14 @@ class SheetRenderer:
         if len(v_lines) < 8 or len(h_lines) < 8:
             return []
 
-        regions = self._detect_target_regions(v_lines, h_lines)
-        if len(regions) != 4:
-            return []
-
+        # Step 3: Build cells per region (preserving region order for
+        # correct alignment with _flatten_values)
         cells: list[Cell] = []
         for left, top, right, bottom in regions:
             local_v = [x for x in v_lines if left <= x <= right]
             local_h = [y for y in h_lines if top <= y <= bottom]
 
+            region_cells: list[Cell] = []
             for r1, r2 in zip(local_h, local_h[1:]):
                 row_h = r2 - r1
                 if row_h < 22 or row_h > 110:
@@ -74,42 +83,44 @@ class SheetRenderer:
                     col_w = c2 - c1
                     if col_w < 24 or col_w > 170:
                         continue
-                    cells.append(Cell(c1 + 3, r1 + 3, c2 - 3, r2 - 3))
+                    region_cells.append(Cell(c1 + 3, r1 + 3, c2 - 3, r2 - 3))
 
-        cells.sort(key=lambda c: (c.top, c.left))
+            region_cells.sort(key=lambda c: (c.top, c.left))
+            cells.extend(region_cells)
+
         return cells
 
-    def _detect_target_regions(self, v_lines: list[int], h_lines: list[int]) -> list[tuple[int, int, int, int]]:
-        candidate_rows: list[tuple[int, int]] = []
-        for y1, y2 in zip(h_lines, h_lines[1:]):
-            gap = y2 - y1
-            if 260 <= gap <= 520:
-                candidate_rows.append((y1, y2))
+    def _detect_target_regions(self, gray: np.ndarray) -> list[tuple[int, int, int, int]]:
+        """Detect 4 athlete scoring regions using OpenCV contour detection.
 
-        if not candidate_rows:
-            return []
+        Uses cv2.findContours + cv2.approxPolyDP to find quadrilateral
+        contours whose bounding-box area is close to 1/8 of the total
+        image area.
+        """
+        img_h, img_w = gray.shape
+        total_area = img_w * img_h
+        target_area = total_area / 8
+        area_lo = target_area * 0.5
+        area_hi = target_area * 1.5
 
-        top, bottom = max(candidate_rows, key=lambda pair: pair[1] - pair[0])
-
-        candidate_cols: list[tuple[int, int]] = []
-        for x1, x2 in zip(v_lines, v_lines[1:]):
-            gap = x2 - x1
-            if 180 <= gap <= 360:
-                candidate_cols.append((x1, x2))
-
-        if len(candidate_cols) < 4:
-            return []
+        _, binary = cv2.threshold(gray, 130, 255, cv2.THRESH_BINARY_INV)
+        contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
         regions: list[tuple[int, int, int, int]] = []
-        for x1, x2 in candidate_cols:
-            if x1 < 10:
+        for cnt in contours:
+            x, y, rw, rh = cv2.boundingRect(cnt)
+            bbox_area = rw * rh
+            if not (area_lo <= bbox_area <= area_hi):
                 continue
-            regions.append((x1, top, x2, bottom))
+            peri = cv2.arcLength(cnt, True)
+            for eps_pct in (0.01, 0.02, 0.03, 0.05, 0.08):
+                approx = cv2.approxPolyDP(cnt, eps_pct * peri, True)
+                if len(approx) <= 6:
+                    regions.append((x, y, x + rw, y + rh))
+                    break
 
         regions.sort(key=lambda r: r[0])
-        if len(regions) > 4:
-            regions = regions[:4]
-        return regions
+        return regions[:4]
 
     def _merge_lines(self, indices: list[int]) -> list[int]:
         if not indices:
