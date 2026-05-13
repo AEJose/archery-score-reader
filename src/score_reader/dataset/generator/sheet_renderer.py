@@ -234,6 +234,7 @@ class SheetRenderer:
     def _create_writer_style(self) -> dict[str, object]:
         return {
             "size_scale": self._rng.uniform(0.92, 1.18),
+            "size_boost": self._rng.uniform(1.0, 1.8),
             "stroke_shift": self._rng.randint(0, 1),
             "rotation": self._rng.uniform(-5.5, 5.5),
             "x_jitter": self._rng.uniform(-4.2, 4.2),
@@ -247,7 +248,9 @@ class SheetRenderer:
     def _pick_font(self, cell: Cell, writer_style: dict[str, object], value_len: int) -> ImageFont.ImageFont:
         cell_h = max(12, cell.bottom - cell.top)
         scale = float(writer_style["size_scale"])
-        target_size = max(11, int(cell_h * 0.68 * scale))
+        size_boost = float(writer_style["size_boost"])
+        base_size = cell_h * 0.68 * scale
+        target_size = max(11, int(base_size * 2.0 * size_boost))
 
         if self._rng.random() < float(writer_style["overflow_prob"]):
             target_size = int(target_size * self._rng.uniform(1.02, 1.10))
