@@ -25,8 +25,11 @@ class GroundTruthGenerator:
         for end_no in range(1, 7):
             arrows: list[SyntheticArrow] = []
             subtotal = 0
-            for arrow_no in range(1, 7):
-                value = self.rng.choice(VALUES)
+            sampled_values = [self.rng.choice(VALUES) for _ in range(6)]
+            # 在每一輪內，分數由高到低排序，符合實際填寫習慣。
+            sampled_values.sort(key=_to_score, reverse=True)
+
+            for arrow_no, value in enumerate(sampled_values, start=1):
                 score = _to_score(value)
                 subtotal += score
                 if value == "X":

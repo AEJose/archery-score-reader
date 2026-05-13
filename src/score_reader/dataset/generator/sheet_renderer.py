@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from collections import defaultdict
 
 import cv2
 import numpy as np
@@ -26,18 +27,19 @@ class SheetRenderer:
         draw = ImageDraw.Draw(image)
         font = ImageFont.load_default()
 
-        cells = self._detect_cells(image)
-        if not cells:
+        per_target_cells = self._detect_cells(image)
+        if not per_target_cells:
             image.save(output_image)
             return
 
-        text_values = self._flatten_values(targets)
-        for cell, value in zip(cells, text_values):
-            self._draw_cell_text(draw, cell, value, font)
+        for target, cells in zip(targets, per_target_cells):
+            placement = self._build_target_placement(cells, target)
+            for cell, value in placement:
+                self._draw_cell_text(draw, cell, value, font)
 
         image.save(output_image)
 
-    def _detect_cells(self, image: Image.Image) -> list[Cell]:
+    def _detect_cells(self, image: Image.Image) -> list[list[Cell]]:
         gray = image.convert("L")
         w, h = gray.size
         arr = np.array(gray)
@@ -69,7 +71,7 @@ class SheetRenderer:
 
         # Step 3: Build cells per region (preserving region order for
         # correct alignment with _flatten_values)
-        cells: list[Cell] = []
+        target_cells: list[list[Cell]] = []
         for left, top, right, bottom in regions:
             local_v = [x for x in v_lines if left <= x <= right]
             local_h = [y for y in h_lines if top <= y <= bottom]
@@ -86,9 +88,62 @@ class SheetRenderer:
                     region_cells.append(Cell(c1 + 3, r1 + 3, c2 - 3, r2 - 3))
 
             region_cells.sort(key=lambda c: (c.top, c.left))
-            cells.extend(region_cells)
+            target_cells.append(region_cells)
 
-        return cells
+        return target_cells
+
+    def _build_target_placement(self, cells: list[Cell], target: SyntheticTarget) -> list[tuple[Cell, str]]:
+        rows = self._group_cells_by_rows(cells)
+        if len(rows) < 12:
+            return []
+
+        scoring_rows = rows[:12]
+        placements: list[tuple[Cell, str]] = []
+
+        for end_idx, end in enumerate(target.rounds):
+            row_a = scoring_rows[end_idx * 2]
+            row_b = scoring_rows[end_idx * 2 + 1]
+            if len(row_a) < 6 or len(row_b) < 6:
+                continue
+
+            # 每列：3 支箭 + 列小計；每兩列右兩欄代表該輪小計與累計。
+            first_three = end.arrows[:3]
+            last_three = end.arrows[3:]
+            row_a_sum = sum(a.score_value for a in first_three)
+            row_b_sum = sum(a.score_value for a in last_three)
+
+            for i, arrow in enumerate(first_three):
+                placements.append((row_a[i], arrow.value))
+            placements.append((row_a[3], str(row_a_sum)))
+
+            for i, arrow in enumerate(last_three):
+                placements.append((row_b[i], arrow.value))
+            placements.append((row_b[3], str(row_b_sum)))
+
+            placements.append((row_a[4], str(end.subtotal)))
+            placements.append((row_a[5], str(end.cumulative)))
+
+        return placements
+
+    def _group_cells_by_rows(self, cells: list[Cell]) -> list[list[Cell]]:
+        if not cells:
+            return []
+        cells_sorted = sorted(cells, key=lambda c: (c.top, c.left))
+        buckets: dict[int, list[Cell]] = defaultdict(list)
+        row_keys: list[int] = []
+        for cell in cells_sorted:
+            assigned_key = None
+            for key in row_keys:
+                if abs(cell.top - key) <= 8:
+                    assigned_key = key
+                    break
+            if assigned_key is None:
+                assigned_key = cell.top
+                row_keys.append(assigned_key)
+            buckets[assigned_key].append(cell)
+
+        rows = [sorted(buckets[key], key=lambda c: c.left) for key in sorted(row_keys)]
+        return rows
 
     def _detect_target_regions(self, gray: np.ndarray) -> list[tuple[int, int, int, int]]:
         """Detect 4 athlete scoring regions using OpenCV contour detection.
@@ -132,17 +187,6 @@ class SheetRenderer:
             else:
                 groups.append([idx])
         return [sum(g) // len(g) for g in groups]
-
-    def _flatten_values(self, targets: list[SyntheticTarget]) -> list[str]:
-        values: list[str] = []
-        for target in targets:
-            for end in target.rounds:
-                for arrow in end.arrows:
-                    values.append(arrow.value)
-                values.append(str(end.subtotal))
-                values.append(str(end.cumulative))
-            values.extend([str(target.x_count), str(target.x_plus_ten_count), str(target.total)])
-        return values
 
     def _draw_cell_text(self, draw: ImageDraw.ImageDraw, cell: Cell, value: str, font: ImageFont.ImageFont) -> None:
         bbox = draw.textbbox((0, 0), value, font=font)
