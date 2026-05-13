@@ -43,33 +43,73 @@ class SheetRenderer:
         dark_cols = []
         for x in range(w):
             dark_count = sum(1 for y in range(h) if px[x, y] < 110)
-            if dark_count > h * 0.30:
+            if dark_count > h * 0.20:
                 dark_cols.append(x)
 
         dark_rows = []
         for y in range(h):
             dark_count = sum(1 for x in range(w) if px[x, y] < 110)
-            if dark_count > w * 0.30:
+            if dark_count > w * 0.20:
                 dark_rows.append(y)
 
         v_lines = self._merge_lines(dark_cols)
         h_lines = self._merge_lines(dark_rows)
-        if len(v_lines) < 8 or len(h_lines) < 12:
+        if len(v_lines) < 8 or len(h_lines) < 8:
+            return []
+
+        regions = self._detect_target_regions(v_lines, h_lines)
+        if len(regions) != 4:
             return []
 
         cells: list[Cell] = []
-        for r1, r2 in zip(h_lines, h_lines[1:]):
-            row_h = r2 - r1
-            if row_h < 24 or row_h > 95:
-                continue
-            for c1, c2 in zip(v_lines, v_lines[1:]):
-                col_w = c2 - c1
-                if col_w < 26 or col_w > 140:
+        for left, top, right, bottom in regions:
+            local_v = [x for x in v_lines if left <= x <= right]
+            local_h = [y for y in h_lines if top <= y <= bottom]
+
+            for r1, r2 in zip(local_h, local_h[1:]):
+                row_h = r2 - r1
+                if row_h < 22 or row_h > 110:
                     continue
-                cells.append(Cell(c1 + 3, r1 + 3, c2 - 3, r2 - 3))
+                for c1, c2 in zip(local_v, local_v[1:]):
+                    col_w = c2 - c1
+                    if col_w < 24 or col_w > 170:
+                        continue
+                    cells.append(Cell(c1 + 3, r1 + 3, c2 - 3, r2 - 3))
 
         cells.sort(key=lambda c: (c.top, c.left))
         return cells
+
+    def _detect_target_regions(self, v_lines: list[int], h_lines: list[int]) -> list[tuple[int, int, int, int]]:
+        candidate_rows: list[tuple[int, int]] = []
+        for y1, y2 in zip(h_lines, h_lines[1:]):
+            gap = y2 - y1
+            if 260 <= gap <= 520:
+                candidate_rows.append((y1, y2))
+
+        if not candidate_rows:
+            return []
+
+        top, bottom = max(candidate_rows, key=lambda pair: pair[1] - pair[0])
+
+        candidate_cols: list[tuple[int, int]] = []
+        for x1, x2 in zip(v_lines, v_lines[1:]):
+            gap = x2 - x1
+            if 180 <= gap <= 360:
+                candidate_cols.append((x1, x2))
+
+        if len(candidate_cols) < 4:
+            return []
+
+        regions: list[tuple[int, int, int, int]] = []
+        for x1, x2 in candidate_cols:
+            if x1 < 10:
+                continue
+            regions.append((x1, top, x2, bottom))
+
+        regions.sort(key=lambda r: r[0])
+        if len(regions) > 4:
+            regions = regions[:4]
+        return regions
 
     def _merge_lines(self, indices: list[int]) -> list[int]:
         if not indices:
