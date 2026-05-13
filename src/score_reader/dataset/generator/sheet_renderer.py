@@ -233,19 +233,14 @@ class SheetRenderer:
 
     def _create_writer_style(self) -> dict[str, object]:
         return {
-            "size_scale": self._rng.uniform(0.95, 1.32),
+            "size_scale": self._rng.uniform(0.92, 1.18),
             "stroke_shift": self._rng.randint(0, 1),
             "rotation": self._rng.uniform(-5.5, 5.5),
             "x_jitter": self._rng.uniform(-4.2, 4.2),
             "y_jitter": self._rng.uniform(-3.5, 3.5),
-            "overflow_prob": self._rng.uniform(0.35, 0.72),
-            "overflow_px": self._rng.uniform(1.0, 7.0),
-            "ink": (
-                self._rng.randint(10, 45),
-                self._rng.randint(10, 45),
-                self._rng.randint(10, 55),
-                self._rng.randint(210, 255),
-            ),
+            "overflow_prob": self._rng.uniform(0.20, 0.45),
+            "overflow_px": self._rng.uniform(0.5, 3.0),
+            "ink": (self._rng.randint(18, 40), self._rng.randint(18, 40), self._rng.randint(18, 50), self._rng.randint(225, 255)),
             "font_path": self._rng.choice(self._font_candidates) if self._font_candidates else None,
         }
 
@@ -255,7 +250,7 @@ class SheetRenderer:
         target_size = max(11, int(cell_h * 0.68 * scale))
 
         if self._rng.random() < float(writer_style["overflow_prob"]):
-            target_size = int(target_size * self._rng.uniform(1.03, 1.25))
+            target_size = int(target_size * self._rng.uniform(1.02, 1.10))
         font_path = writer_style.get("font_path")
         if isinstance(font_path, Path):
             try:
@@ -287,16 +282,16 @@ class SheetRenderer:
         alpha = arr[:, :, 3]
 
         # Edge roughness and ink discontinuity
-        k = self._rng.choice((1, 1, 2))
+        k = 1
         kernel = np.ones((k, k), np.uint8)
         alpha = cv2.erode(alpha, kernel, iterations=1)
         alpha = cv2.dilate(alpha, kernel, iterations=1)
 
-        noise = np.random.default_rng(self._rng.randint(1, 999999)).normal(0, 10, size=alpha.shape)
+        noise = np.random.default_rng(self._rng.randint(1, 999999)).normal(0, 4.0, size=alpha.shape)
         alpha = np.clip(alpha.astype(np.float32) + noise, 0, 255).astype(np.uint8)
         arr[:, :, 3] = alpha
 
-        angle = self._rng.uniform(-0.8, 0.8)
+        angle = self._rng.uniform(-0.25, 0.25)
         h, w = alpha.shape
         rot_m = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
         rotated = cv2.warpAffine(arr, rot_m, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT)
@@ -307,16 +302,16 @@ class SheetRenderer:
         h, w = arr.shape[:2]
 
         # Mild blur and lighting gradient to mimic camera capture
-        if self._rng.random() < 0.85:
-            sigma = self._rng.uniform(0.25, 0.8)
+        if self._rng.random() < 0.65:
+            sigma = self._rng.uniform(0.2, 0.45)
             arr = cv2.GaussianBlur(arr, (3, 3), sigmaX=sigma)
 
-        gradient = np.linspace(self._rng.uniform(0.92, 0.98), self._rng.uniform(1.02, 1.08), w, dtype=np.float32)
+        gradient = np.linspace(self._rng.uniform(0.97, 1.0), self._rng.uniform(1.0, 1.03), w, dtype=np.float32)
         grad_map = np.tile(gradient, (h, 1))[:, :, None]
         arr = np.clip(arr.astype(np.float32) * grad_map, 0, 255).astype(np.uint8)
 
         # JPEG-like compression artifacts
-        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self._rng.randint(72, 92)]
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self._rng.randint(86, 95)]
         ok, enc = cv2.imencode(".jpg", cv2.cvtColor(arr, cv2.COLOR_RGB2BGR), encode_param)
         if ok:
             dec = cv2.imdecode(enc, cv2.IMREAD_COLOR)
