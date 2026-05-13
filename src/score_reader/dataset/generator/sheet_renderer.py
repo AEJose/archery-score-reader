@@ -43,9 +43,7 @@ class SheetRenderer:
             for cell, value in placement:
                 self._draw_cell_text(text_layer, cell, value, writer_style)
 
-        stylized_layer = self._stylize_text_layer(text_layer)
-        image = Image.alpha_composite(base.convert("RGBA"), stylized_layer).convert("RGB")
-        image = self._apply_capture_artifacts(image)
+        image = Image.alpha_composite(base.convert("RGBA"), text_layer).convert("RGB")
 
         image.save(output_image)
 
@@ -235,8 +233,7 @@ class SheetRenderer:
         return {
             "size_scale": self._rng.uniform(0.92, 1.18),
             "size_boost": self._rng.uniform(1.0, 1.8),
-            "stroke_shift": self._rng.randint(0, 1),
-            "rotation": self._rng.uniform(-5.5, 5.5),
+            "rotation": self._rng.uniform(-8.0, 8.0),
             "x_jitter": self._rng.uniform(-4.2, 4.2),
             "y_jitter": self._rng.uniform(-3.5, 3.5),
             "overflow_prob": self._rng.uniform(0.20, 0.45),
@@ -263,9 +260,9 @@ class SheetRenderer:
         return ImageFont.load_default()
 
     def _draw_cell_text(self, layer: Image.Image, cell: Cell, value: str, writer_style: dict[str, object]) -> None:
-        draw = ImageDraw.Draw(layer)
         font = self._pick_font(cell, writer_style, len(value))
-        bbox = draw.textbbox((0, 0), value, font=font)
+        probe_draw = ImageDraw.Draw(layer)
+        bbox = probe_draw.textbbox((0, 0), value, font=font)
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
         x = cell.left + (cell.right - cell.left - text_w) // 2 + int(float(writer_style["x_jitter"]))
@@ -275,49 +272,8 @@ class SheetRenderer:
             x += int(self._rng.uniform(-overflow_px, overflow_px))
             y += int(self._rng.uniform(-overflow_px, overflow_px))
         ink = writer_style["ink"]
-
-        if int(writer_style["stroke_shift"]) > 0:
-            draw.text((x + 1, y), value, fill=(ink[0], ink[1], ink[2], max(120, ink[3] - 60)), font=font)
-        draw.text((x, y), value, fill=ink, font=font)
-
-    def _stylize_text_layer(self, text_layer: Image.Image) -> Image.Image:
-        arr = np.array(text_layer)
-        alpha = arr[:, :, 3]
-
-        # Edge roughness and ink discontinuity
-        k = 1
-        kernel = np.ones((k, k), np.uint8)
-        alpha = cv2.erode(alpha, kernel, iterations=1)
-        alpha = cv2.dilate(alpha, kernel, iterations=1)
-
-        noise = np.random.default_rng(self._rng.randint(1, 999999)).normal(0, 4.0, size=alpha.shape)
-        alpha = np.clip(alpha.astype(np.float32) + noise, 0, 255).astype(np.uint8)
-        arr[:, :, 3] = alpha
-
-        angle = self._rng.uniform(-0.25, 0.25)
-        h, w = alpha.shape
-        rot_m = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
-        rotated = cv2.warpAffine(arr, rot_m, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT)
-        return Image.fromarray(rotated, mode="RGBA")
-
-    def _apply_capture_artifacts(self, image: Image.Image) -> Image.Image:
-        arr = np.array(image)
-        h, w = arr.shape[:2]
-
-        # Mild blur and lighting gradient to mimic camera capture
-        if self._rng.random() < 0.65:
-            sigma = self._rng.uniform(0.2, 0.45)
-            arr = cv2.GaussianBlur(arr, (3, 3), sigmaX=sigma)
-
-        gradient = np.linspace(self._rng.uniform(0.97, 1.0), self._rng.uniform(1.0, 1.03), w, dtype=np.float32)
-        grad_map = np.tile(gradient, (h, 1))[:, :, None]
-        arr = np.clip(arr.astype(np.float32) * grad_map, 0, 255).astype(np.uint8)
-
-        # JPEG-like compression artifacts
-        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self._rng.randint(86, 95)]
-        ok, enc = cv2.imencode(".jpg", cv2.cvtColor(arr, cv2.COLOR_RGB2BGR), encode_param)
-        if ok:
-            dec = cv2.imdecode(enc, cv2.IMREAD_COLOR)
-            arr = cv2.cvtColor(dec, cv2.COLOR_BGR2RGB)
-
-        return Image.fromarray(arr)
+        text_patch = Image.new("RGBA", (text_w + 24, text_h + 24), (0, 0, 0, 0))
+        text_draw = ImageDraw.Draw(text_patch)
+        text_draw.text((12, 12), value, fill=ink, font=font)
+        rotated_patch = text_patch.rotate(float(writer_style["rotation"]), resample=Image.Resampling.BICUBIC, expand=True)
+        layer.alpha_composite(rotated_patch, (x - 12, y - 12))
