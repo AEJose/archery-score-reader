@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from collections import defaultdict
+import random
 
 import cv2
 import numpy as np
@@ -22,20 +23,29 @@ class Cell:
 class SheetRenderer:
     """Render synthetic scores into the score-sheet template."""
 
+    def __init__(self, seed: int = 20260513) -> None:
+        self._rng = random.Random(seed)
+        self._font_candidates = self._load_handwriting_fonts()
+
     def render(self, template_image: Path, output_image: Path, targets: list[SyntheticTarget]) -> None:
         image = Image.open(template_image).convert("RGB")
-        draw = ImageDraw.Draw(image)
-        font = ImageFont.load_default()
+        base = image.copy()
 
         per_target_cells = self._detect_cells(image)
         if not per_target_cells:
             image.save(output_image)
             return
 
+        text_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
         for target, cells in zip(targets, per_target_cells):
             placement = self._build_target_placement(cells, target)
+            writer_style = self._create_writer_style()
             for cell, value in placement:
-                self._draw_cell_text(draw, cell, value, font)
+                self._draw_cell_text(text_layer, cell, value, writer_style)
+
+        stylized_layer = self._stylize_text_layer(text_layer)
+        image = Image.alpha_composite(base.convert("RGBA"), stylized_layer).convert("RGB")
+        image = self._apply_capture_artifacts(image)
 
         image.save(output_image)
 
@@ -188,10 +198,121 @@ class SheetRenderer:
                 groups.append([idx])
         return [sum(g) // len(g) for g in groups]
 
-    def _draw_cell_text(self, draw: ImageDraw.ImageDraw, cell: Cell, value: str, font: ImageFont.ImageFont) -> None:
+    def _load_handwriting_fonts(self) -> list[Path]:
+        search_roots = [
+            Path("/usr/share/fonts"),
+            Path("/usr/local/share/fonts"),
+            Path.home() / ".fonts",
+        ]
+        tokens = (
+            "hand",
+            "script",
+            "cursive",
+            "comic",
+            "chalk",
+            "brush",
+            "marker",
+            "patrick",
+            "indie",
+            "architect",
+            "caveat",
+        )
+        matches: list[Path] = []
+        for root in search_roots:
+            if not root.exists():
+                continue
+            for path in root.rglob("*.ttf"):
+                name = path.name.lower()
+                if any(token in name for token in tokens):
+                    matches.append(path)
+            for path in root.rglob("*.otf"):
+                name = path.name.lower()
+                if any(token in name for token in tokens):
+                    matches.append(path)
+        return matches
+
+    def _create_writer_style(self) -> dict[str, object]:
+        return {
+            "size_scale": self._rng.uniform(0.85, 1.18),
+            "stroke_shift": self._rng.randint(0, 1),
+            "rotation": self._rng.uniform(-5.5, 5.5),
+            "x_jitter": self._rng.uniform(-2.5, 2.5),
+            "y_jitter": self._rng.uniform(-2.0, 2.0),
+            "ink": (
+                self._rng.randint(10, 45),
+                self._rng.randint(10, 45),
+                self._rng.randint(10, 55),
+                self._rng.randint(210, 255),
+            ),
+            "font_path": self._rng.choice(self._font_candidates) if self._font_candidates else None,
+        }
+
+    def _pick_font(self, cell: Cell, writer_style: dict[str, object], value_len: int) -> ImageFont.ImageFont:
+        cell_h = max(12, cell.bottom - cell.top)
+        cell_w = max(20, cell.right - cell.left)
+        scale = float(writer_style["size_scale"])
+        target_size = max(11, int(cell_h * 0.60 * scale))
+        target_size = min(target_size, max(11, int(cell_w / max(1.4, value_len * 0.8))))
+        font_path = writer_style.get("font_path")
+        if isinstance(font_path, Path):
+            try:
+                return ImageFont.truetype(str(font_path), target_size)
+            except OSError:
+                pass
+        return ImageFont.load_default()
+
+    def _draw_cell_text(self, layer: Image.Image, cell: Cell, value: str, writer_style: dict[str, object]) -> None:
+        draw = ImageDraw.Draw(layer)
+        font = self._pick_font(cell, writer_style, len(value))
         bbox = draw.textbbox((0, 0), value, font=font)
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
-        x = cell.left + (cell.right - cell.left - text_w) // 2
-        y = cell.top + (cell.bottom - cell.top - text_h) // 2
-        draw.text((x, y), value, fill=(10, 10, 10), font=font)
+        x = cell.left + (cell.right - cell.left - text_w) // 2 + int(float(writer_style["x_jitter"]))
+        y = cell.top + (cell.bottom - cell.top - text_h) // 2 + int(float(writer_style["y_jitter"]))
+        ink = writer_style["ink"]
+
+        if int(writer_style["stroke_shift"]) > 0:
+            draw.text((x + 1, y), value, fill=(ink[0], ink[1], ink[2], max(120, ink[3] - 60)), font=font)
+        draw.text((x, y), value, fill=ink, font=font)
+
+    def _stylize_text_layer(self, text_layer: Image.Image) -> Image.Image:
+        arr = np.array(text_layer)
+        alpha = arr[:, :, 3]
+
+        # Edge roughness and ink discontinuity
+        k = self._rng.choice((1, 1, 2))
+        kernel = np.ones((k, k), np.uint8)
+        alpha = cv2.erode(alpha, kernel, iterations=1)
+        alpha = cv2.dilate(alpha, kernel, iterations=1)
+
+        noise = np.random.default_rng(self._rng.randint(1, 999999)).normal(0, 10, size=alpha.shape)
+        alpha = np.clip(alpha.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+        arr[:, :, 3] = alpha
+
+        angle = self._rng.uniform(-0.8, 0.8)
+        h, w = alpha.shape
+        rot_m = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+        rotated = cv2.warpAffine(arr, rot_m, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT)
+        return Image.fromarray(rotated, mode="RGBA")
+
+    def _apply_capture_artifacts(self, image: Image.Image) -> Image.Image:
+        arr = np.array(image)
+        h, w = arr.shape[:2]
+
+        # Mild blur and lighting gradient to mimic camera capture
+        if self._rng.random() < 0.85:
+            sigma = self._rng.uniform(0.25, 0.8)
+            arr = cv2.GaussianBlur(arr, (3, 3), sigmaX=sigma)
+
+        gradient = np.linspace(self._rng.uniform(0.92, 0.98), self._rng.uniform(1.02, 1.08), w, dtype=np.float32)
+        grad_map = np.tile(gradient, (h, 1))[:, :, None]
+        arr = np.clip(arr.astype(np.float32) * grad_map, 0, 255).astype(np.uint8)
+
+        # JPEG-like compression artifacts
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self._rng.randint(72, 92)]
+        ok, enc = cv2.imencode(".jpg", cv2.cvtColor(arr, cv2.COLOR_RGB2BGR), encode_param)
+        if ok:
+            dec = cv2.imdecode(enc, cv2.IMREAD_COLOR)
+            arr = cv2.cvtColor(dec, cv2.COLOR_BGR2RGB)
+
+        return Image.fromarray(arr)
