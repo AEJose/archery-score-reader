@@ -96,21 +96,13 @@ Sheet footer: Scorer signature, Judge signature
 # Install dependencies
 uv sync
 
-# Run recognition on a folder of images
-uv run score-reader run --input ./input --output ./output --config ./configs/default.yaml
-
 # Generate synthetic training data
-uv run score-reader generate-dataset \
-  --template ./templates/score_sheet.png \
-  --geometry ./templates/score_sheet_geometry.json \
+uv run score-reader \
+  --template ./sample.png \
   --output ./dataset/generated \
-  --config ./configs/augmentation.yaml
+  --num-images 100 \
+  --seed 1234
 
-# Validate generated dataset
-uv run score-reader validate-dataset --dataset ./dataset/generated
-
-# Print resolved config
-uv run score-reader print-config --config ./configs/default.yaml
 ```
 
 ### Development
@@ -287,21 +279,13 @@ TBD
 # 安裝依賴
 uv sync
 
-# 對影像資料夾執行辨識
-uv run score-reader run --input ./input --output ./output --config ./configs/default.yaml
-
 # 產生合成訓練資料
-uv run score-reader generate-dataset \
-  --template ./templates/score_sheet.png \
-  --geometry ./templates/score_sheet_geometry.json \
+uv run score-reader \
+  --template ./sample.png \
   --output ./dataset/generated \
-  --config ./configs/augmentation.yaml
+  --num-images 100 \
+  --seed 1234
 
-# 驗證產生的資料集
-uv run score-reader validate-dataset --dataset ./dataset/generated
-
-# 輸出解析後的設定
-uv run score-reader print-config --config ./configs/default.yaml
 ```
 
 ### 開發指令
@@ -404,7 +388,7 @@ This script will:
 
 ```bash
 uv sync
-uv run score-reader generate-dataset \
+uv run score-reader \
   --template ./sample.png \
   --output ./dataset/generated \
   --num-images 100 \
@@ -430,7 +414,7 @@ bash ./scripts/init_and_generate_100.sh
 
 ```bash
 uv sync
-uv run score-reader generate-dataset \
+uv run score-reader \
   --template ./sample.png \
   --output ./dataset/generated \
   --num-images 100 \
