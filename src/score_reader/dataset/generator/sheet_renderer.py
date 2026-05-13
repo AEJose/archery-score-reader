@@ -233,11 +233,13 @@ class SheetRenderer:
 
     def _create_writer_style(self) -> dict[str, object]:
         return {
-            "size_scale": self._rng.uniform(0.85, 1.18),
+            "size_scale": self._rng.uniform(0.95, 1.32),
             "stroke_shift": self._rng.randint(0, 1),
             "rotation": self._rng.uniform(-5.5, 5.5),
-            "x_jitter": self._rng.uniform(-2.5, 2.5),
-            "y_jitter": self._rng.uniform(-2.0, 2.0),
+            "x_jitter": self._rng.uniform(-4.2, 4.2),
+            "y_jitter": self._rng.uniform(-3.5, 3.5),
+            "overflow_prob": self._rng.uniform(0.35, 0.72),
+            "overflow_px": self._rng.uniform(1.0, 7.0),
             "ink": (
                 self._rng.randint(10, 45),
                 self._rng.randint(10, 45),
@@ -249,10 +251,11 @@ class SheetRenderer:
 
     def _pick_font(self, cell: Cell, writer_style: dict[str, object], value_len: int) -> ImageFont.ImageFont:
         cell_h = max(12, cell.bottom - cell.top)
-        cell_w = max(20, cell.right - cell.left)
         scale = float(writer_style["size_scale"])
-        target_size = max(11, int(cell_h * 0.60 * scale))
-        target_size = min(target_size, max(11, int(cell_w / max(1.4, value_len * 0.8))))
+        target_size = max(11, int(cell_h * 0.68 * scale))
+
+        if self._rng.random() < float(writer_style["overflow_prob"]):
+            target_size = int(target_size * self._rng.uniform(1.03, 1.25))
         font_path = writer_style.get("font_path")
         if isinstance(font_path, Path):
             try:
@@ -269,6 +272,10 @@ class SheetRenderer:
         text_h = bbox[3] - bbox[1]
         x = cell.left + (cell.right - cell.left - text_w) // 2 + int(float(writer_style["x_jitter"]))
         y = cell.top + (cell.bottom - cell.top - text_h) // 2 + int(float(writer_style["y_jitter"]))
+        if self._rng.random() < float(writer_style["overflow_prob"]):
+            overflow_px = float(writer_style["overflow_px"])
+            x += int(self._rng.uniform(-overflow_px, overflow_px))
+            y += int(self._rng.uniform(-overflow_px, overflow_px))
         ink = writer_style["ink"]
 
         if int(writer_style["stroke_shift"]) > 0:
