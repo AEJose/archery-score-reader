@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from collections import defaultdict
+import random
 
 import cv2
 import numpy as np
@@ -22,20 +23,27 @@ class Cell:
 class SheetRenderer:
     """Render synthetic scores into the score-sheet template."""
 
+    def __init__(self, seed: int = 20260513) -> None:
+        self._rng = random.Random(seed)
+        self._font_candidates = self._load_handwriting_fonts()
+
     def render(self, template_image: Path, output_image: Path, targets: list[SyntheticTarget]) -> None:
         image = Image.open(template_image).convert("RGB")
-        draw = ImageDraw.Draw(image)
-        font = ImageFont.load_default()
+        base = image.copy()
 
         per_target_cells = self._detect_cells(image)
         if not per_target_cells:
             image.save(output_image)
             return
 
+        text_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
         for target, cells in zip(targets, per_target_cells):
             placement = self._build_target_placement(cells, target)
+            writer_style = self._create_writer_style()
             for cell, value in placement:
-                self._draw_cell_text(draw, cell, value, font)
+                self._draw_cell_text(text_layer, cell, value, writer_style)
+
+        image = Image.alpha_composite(base.convert("RGBA"), text_layer).convert("RGB")
 
         image.save(output_image)
 
@@ -188,10 +196,84 @@ class SheetRenderer:
                 groups.append([idx])
         return [sum(g) // len(g) for g in groups]
 
-    def _draw_cell_text(self, draw: ImageDraw.ImageDraw, cell: Cell, value: str, font: ImageFont.ImageFont) -> None:
-        bbox = draw.textbbox((0, 0), value, font=font)
+    def _load_handwriting_fonts(self) -> list[Path]:
+        search_roots = [
+            Path("/usr/share/fonts"),
+            Path("/usr/local/share/fonts"),
+            Path.home() / ".fonts",
+        ]
+        tokens = (
+            "hand",
+            "script",
+            "cursive",
+            "comic",
+            "chalk",
+            "brush",
+            "marker",
+            "patrick",
+            "indie",
+            "architect",
+            "caveat",
+        )
+        matches: list[Path] = []
+        for root in search_roots:
+            if not root.exists():
+                continue
+            for path in root.rglob("*.ttf"):
+                name = path.name.lower()
+                if any(token in name for token in tokens):
+                    matches.append(path)
+            for path in root.rglob("*.otf"):
+                name = path.name.lower()
+                if any(token in name for token in tokens):
+                    matches.append(path)
+        return matches
+
+    def _create_writer_style(self) -> dict[str, object]:
+        return {
+            "size_scale": self._rng.uniform(0.92, 1.18),
+            "size_boost": self._rng.uniform(1.0, 1.8),
+            "rotation": self._rng.uniform(-8.0, 8.0),
+            "x_jitter": self._rng.uniform(-4.2, 4.2),
+            "y_jitter": self._rng.uniform(-3.5, 3.5),
+            "overflow_prob": self._rng.uniform(0.20, 0.45),
+            "overflow_px": self._rng.uniform(0.5, 3.0),
+            "ink": (self._rng.randint(18, 40), self._rng.randint(18, 40), self._rng.randint(18, 50), self._rng.randint(225, 255)),
+            "font_path": self._rng.choice(self._font_candidates) if self._font_candidates else None,
+        }
+
+    def _pick_font(self, cell: Cell, writer_style: dict[str, object], value_len: int) -> ImageFont.ImageFont:
+        cell_h = max(12, cell.bottom - cell.top)
+        scale = float(writer_style["size_scale"])
+        size_boost = float(writer_style["size_boost"])
+        base_size = cell_h * 0.68 * scale
+        target_size = max(11, int(base_size * 2.0 * size_boost))
+
+        if self._rng.random() < float(writer_style["overflow_prob"]):
+            target_size = int(target_size * self._rng.uniform(1.02, 1.10))
+        font_path = writer_style.get("font_path")
+        if isinstance(font_path, Path):
+            try:
+                return ImageFont.truetype(str(font_path), target_size)
+            except OSError:
+                pass
+        return ImageFont.load_default()
+
+    def _draw_cell_text(self, layer: Image.Image, cell: Cell, value: str, writer_style: dict[str, object]) -> None:
+        font = self._pick_font(cell, writer_style, len(value))
+        probe_draw = ImageDraw.Draw(layer)
+        bbox = probe_draw.textbbox((0, 0), value, font=font)
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
-        x = cell.left + (cell.right - cell.left - text_w) // 2
-        y = cell.top + (cell.bottom - cell.top - text_h) // 2
-        draw.text((x, y), value, fill=(10, 10, 10), font=font)
+        x = cell.left + (cell.right - cell.left - text_w) // 2 + int(float(writer_style["x_jitter"]))
+        y = cell.top + (cell.bottom - cell.top - text_h) // 2 + int(float(writer_style["y_jitter"]))
+        if self._rng.random() < float(writer_style["overflow_prob"]):
+            overflow_px = float(writer_style["overflow_px"])
+            x += int(self._rng.uniform(-overflow_px, overflow_px))
+            y += int(self._rng.uniform(-overflow_px, overflow_px))
+        ink = writer_style["ink"]
+        text_patch = Image.new("RGBA", (text_w + 24, text_h + 24), (0, 0, 0, 0))
+        text_draw = ImageDraw.Draw(text_patch)
+        text_draw.text((12, 12), value, fill=ink, font=font)
+        rotated_patch = text_patch.rotate(float(writer_style["rotation"]), resample=Image.Resampling.BICUBIC, expand=True)
+        layer.alpha_composite(rotated_patch, (x - 12, y - 12))
