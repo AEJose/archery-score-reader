@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Run from repo root
 uv sync
-uv run score-reader generate-dataset \
+uv run score-reader \
   --template ./sample.png \
   --output ./dataset/generated \
   --num-images 100 \
