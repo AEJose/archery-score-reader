@@ -384,3 +384,55 @@ score-reader/
 ### 授權
 
 待定
+
+---
+
+## Project Init + Generate 100 Fake Samples
+
+### One-command way (recommended)
+
+```bash
+bash ./scripts/init_and_generate_100.sh
+```
+
+This script will:
+1. install dependencies via `uv sync`
+2. generate 100 fake samples based on `./sample.png`
+3. write outputs to `./dataset/generated`
+
+### Manual commands
+
+```bash
+uv sync
+uv run score-reader generate-dataset \
+  --template ./sample.png \
+  --output ./dataset/generated \
+  --num-images 100 \
+  --seed 1234
+```
+
+---
+
+## 專案初始化 + 一個指令生成 100 筆假資料
+
+### 一鍵方式（建議）
+
+```bash
+bash ./scripts/init_and_generate_100.sh
+```
+
+這個腳本會：
+1. 用 `uv sync` 安裝依賴
+2. 以 `./sample.png` 為基底生成 100 筆假資料
+3. 輸出到 `./dataset/generated`
+
+### 手動指令
+
+```bash
+uv sync
+uv run score-reader generate-dataset \
+  --template ./sample.png \
+  --output ./dataset/generated \
+  --num-images 100 \
+  --seed 1234
+```
