@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.egg-info/
+
+# Virtual environment
+.venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Generated data
+dataset/

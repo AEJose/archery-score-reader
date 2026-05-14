@@ -9,7 +9,7 @@
 
 | 項目 | 值 |
 |------|-----|
-| 影像檔案 | `real.png`（專案根目錄） |
+| 影像檔案 | `tests/fixtures/real.png` |
 | 尺寸 | 1100 × 769 px |
 | 方向 | landscape（橫向拍攝） |
 | 記分區數量 | **3 個**（左、中、右各一位選手） |
@@ -65,7 +65,7 @@
 | 2 | (279,208)→(564,642) | 285×434 | 中間記分區 | 正確 |
 | 3 | (526,181)→(813,615) | 287×434 | 右側記分區 | 正確 |
 
-debug 視覺化輸出：`real_debug_regions.png`
+debug 視覺化輸出：`tests/fixtures/debug_output/real_debug_regions.png`
 
 ### 誤判原因
 
@@ -175,7 +175,7 @@ debug 視覺化輸出：`real_debug_regions.png`
 ## 7. 需要實作的完整 Pipeline
 
 ```
-real.png
+tests/fixtures/real.png
   │
   ▼
 [Step 1] 影像前處理 (preprocessing)
@@ -386,9 +386,9 @@ src/score_reader/
 1. 對合成影像跑完整 pipeline（不加 artifact）→ 預期 accuracy ~100%
 2. 對合成影像加 artifact 後跑 pipeline → 衡量 preprocessing 的校正效果
 
-### 11.2 用 real.png 做 integration test
+### 11.2 用 tests/fixtures/real.png 做 integration test
 
-1. 手動標註 `real.png` 的 ground truth（JSON 格式同 `models.py`）
+1. 手動標註 `tests/fixtures/real.png` 的 ground truth（JSON 格式同 `models.py`）
 2. 跑 pipeline 後用 `evaluate_dataset()` 比對
 3. 逐步排查哪個 step 損失最大
 
@@ -416,7 +416,7 @@ src/score_reader/
 
 ```bash
 # 對 real.png 跑偵測
-uv run score-reader detect real.png --output ./real_result.json
+uv run score-reader detect tests/fixtures/real.png --output ./real_result.json
 
 # 如果有 ground truth，跑評估
 MANIFEST=./real_manifest.jsonl \

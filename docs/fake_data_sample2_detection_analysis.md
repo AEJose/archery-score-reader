@@ -9,7 +9,7 @@
 
 | 項目 | 值 |
 |------|-----|
-| 影像檔案 | `fake_data_sample2.png`（專案根目錄） |
+| 影像檔案 | `tests/fixtures/fake_data_sample2.png` |
 | 影像類型 | 合成假資料（由 pipeline 產生，帶有拍攝模擬 artifact） |
 | 尺寸 | 1100 × 769 px |
 | 方向 | landscape（橫向） |
@@ -152,9 +152,9 @@ debug 影像分析（Region 0）：
 
 | 步驟 | 檔案 | 觀察 |
 |------|------|------|
-| Adaptive threshold | `debug_region0_binary.png` | 格線和文字都有被偵測到 |
-| Vertical morphology | `debug_region0_vertical.png` | 垂直線**碎片化** — 因歪斜被打斷成短段 |
-| Horizontal morphology | `debug_region0_horizontal.png` | 水平線**碎片化** — 不連續片段 |
+| Adaptive threshold | `tests/fixtures/debug_output/debug_region0_binary.png` | 格線和文字都有被偵測到 |
+| Vertical morphology | `tests/fixtures/debug_output/debug_region0_vertical.png` | 垂直線**碎片化** — 因歪斜被打斷成短段 |
+| Horizontal morphology | `tests/fixtures/debug_output/debug_region0_horizontal.png` | 水平線**碎片化** — 不連續片段 |
 
 morphological opening 用的 kernel 尺寸：
 - V kernel: `(1, 26)` — 要求連續 26px 的垂直白點
@@ -295,12 +295,12 @@ from score_reader.dataset.generator.sheet_renderer import SheetRenderer
 renderer = SheetRenderer(seed=42)
 
 # 1. 乾淨模板必須仍然正常
-cells_clean = renderer._detect_cells(Image.open("sample.png").convert("RGB"))
+cells_clean = renderer._detect_cells(Image.open("sample.png").convert("RGB"))  # 模板留在根目錄
 assert len(cells_clean) == 4
 assert all(len(c) >= 84 for c in cells_clean)
 
 # 2. 帶 artifact 的假資料也要能偵測
-cells_fake = renderer._detect_cells(Image.open("fake_data_sample2.png").convert("RGB"))
+cells_fake = renderer._detect_cells(Image.open("tests/fixtures/fake_data_sample2.png").convert("RGB"))
 assert len(cells_fake) >= 3  # 至少 3 個區域
 assert all(len(c) >= 60 for c in cells_fake)  # 每區至少 60 cells
 ```
