@@ -33,7 +33,9 @@ class OCREngine:
         image = cv2.imread(str(image_path))
         if image is None:
             raise FileNotFoundError(f"Unable to read image: {image_path}")
+        return self.run_array(image)
 
+    def run_array(self, image) -> list[OCRToken]:
         engine = self._get_engine()
         result, _ = engine(image)
 
