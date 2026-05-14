@@ -25,6 +25,7 @@ class SheetRenderer:
 
     def __init__(self, seed: int = 20260513) -> None:
         self._rng = random.Random(seed)
+        self._np_rng = np.random.default_rng(seed)
         self._font_candidates = self._load_handwriting_fonts()
         self._fallback_font = self._find_fallback_font()
 
@@ -45,6 +46,7 @@ class SheetRenderer:
                 self._draw_cell_text(text_layer, cell, value, writer_style)
 
         image = Image.alpha_composite(base.convert("RGBA"), text_layer).convert("RGB")
+        image = self._apply_capture_artifacts(image)
 
         image.save(output_image)
 
@@ -196,6 +198,80 @@ class SheetRenderer:
             else:
                 groups.append([idx])
         return [sum(g) // len(g) for g in groups]
+
+
+    def _apply_capture_artifacts(self, image: Image.Image) -> Image.Image:
+        arr = np.array(image.convert("RGB"), dtype=np.uint8)
+
+        # 手持拍攝常見：輕微旋轉 + 透視偏移（不翻轉）
+        arr = self._apply_affine_jitter(arr)
+        arr = self._apply_perspective_jitter(arr)
+
+        # 不同曝光/陰影/噪點
+        arr = self._apply_exposure_and_shadows(arr)
+        arr = self._apply_sensor_noise(arr)
+
+        return Image.fromarray(arr, mode="RGB")
+
+    def _apply_affine_jitter(self, arr: np.ndarray) -> np.ndarray:
+        h, w = arr.shape[:2]
+        angle = self._rng.uniform(-7.0, 7.0)
+        scale = self._rng.uniform(0.97, 1.03)
+        tx = self._rng.uniform(-0.025 * w, 0.025 * w)
+        ty = self._rng.uniform(-0.02 * h, 0.02 * h)
+        matrix = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), angle, scale)
+        matrix[0, 2] += tx
+        matrix[1, 2] += ty
+        return cv2.warpAffine(arr, matrix, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+    def _apply_perspective_jitter(self, arr: np.ndarray) -> np.ndarray:
+        h, w = arr.shape[:2]
+        margin = min(w, h) * self._rng.uniform(0.015, 0.045)
+
+        src = np.float32([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]])
+        dst = np.float32([
+            [self._rng.uniform(0, margin), self._rng.uniform(0, margin)],
+            [w - 1 - self._rng.uniform(0, margin), self._rng.uniform(0, margin)],
+            [w - 1 - self._rng.uniform(0, margin), h - 1 - self._rng.uniform(0, margin)],
+            [self._rng.uniform(0, margin), h - 1 - self._rng.uniform(0, margin)],
+        ])
+        matrix = cv2.getPerspectiveTransform(src, dst)
+        return cv2.warpPerspective(arr, matrix, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+    def _apply_exposure_and_shadows(self, arr: np.ndarray) -> np.ndarray:
+        arr_f = arr.astype(np.float32)
+
+        alpha = self._rng.uniform(0.86, 1.18)
+        beta = self._rng.uniform(-26.0, 24.0)
+        arr_f = arr_f * alpha + beta
+
+        h, w = arr.shape[:2]
+        if self._rng.random() < 0.9:
+            x = np.linspace(-1.0, 1.0, w, dtype=np.float32)
+            y = np.linspace(-1.0, 1.0, h, dtype=np.float32)
+            xx, yy = np.meshgrid(x, y)
+            angle = self._rng.uniform(0.0, np.pi)
+            grad = np.cos(angle) * xx + np.sin(angle) * yy
+            grad = (grad - grad.min()) / (grad.max() - grad.min() + 1e-6)
+            strength = self._rng.uniform(0.72, 1.15)
+            shade = (0.8 + 0.2 * grad) * strength
+            arr_f *= shade[..., None]
+
+        return np.clip(arr_f, 0, 255).astype(np.uint8)
+
+    def _apply_sensor_noise(self, arr: np.ndarray) -> np.ndarray:
+        arr_f = arr.astype(np.float32)
+
+        gaussian_sigma = self._rng.uniform(2.0, 9.0)
+        gaussian = self._np_rng.normal(0.0, gaussian_sigma, arr.shape).astype(np.float32)
+        arr_f += gaussian
+
+        if self._rng.random() < 0.7:
+            blurred = cv2.GaussianBlur(arr_f, (0, 0), sigmaX=self._rng.uniform(0.2, 1.2))
+            blend = self._rng.uniform(0.08, 0.25)
+            arr_f = arr_f * (1 - blend) + blurred * blend
+
+        return np.clip(arr_f, 0, 255).astype(np.uint8)
 
     def _load_handwriting_fonts(self) -> list[Path]:
         search_roots = [
