@@ -47,8 +47,16 @@ class SheetRenderer:
 
         image = Image.alpha_composite(base.convert("RGBA"), text_layer).convert("RGB")
         image = self._apply_capture_artifacts(image)
+        image = self._apply_orientation_variant(image)
 
         image.save(output_image)
+
+    def _apply_orientation_variant(self, image: Image.Image) -> Image.Image:
+        """Augment orientation to include rotated and upside-down sheets."""
+        angle = self._rng.choice((0, 90, 180, 270))
+        if angle == 0:
+            return image
+        return image.rotate(angle, expand=True, fillcolor=(255, 255, 255))
 
     def _detect_cells(self, image: Image.Image) -> list[list[Cell]]:
         gray = image.convert("L")
