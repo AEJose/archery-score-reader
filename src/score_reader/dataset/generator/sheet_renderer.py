@@ -251,13 +251,13 @@ class SheetRenderer:
 
     def _create_writer_style(self) -> dict[str, object]:
         return {
-            "size_scale": self._rng.uniform(1.00, 1.42),
-            "size_boost": self._rng.uniform(1.3, 2.2),
+            "size_scale": self._rng.uniform(0.92, 1.18),
+            "size_boost": self._rng.uniform(1.0, 1.4),
             "rotation": self._rng.uniform(-8.0, 8.0),
             "x_jitter": self._rng.uniform(-4.2, 4.2),
             "y_jitter": self._rng.uniform(-3.5, 3.5),
             "overflow_prob": self._rng.uniform(0.20, 0.45),
-            "overflow_px": self._rng.uniform(1.5, 6.0),
+            "overflow_px": self._rng.uniform(0.8, 3.2),
             "ink": (self._rng.randint(18, 40), self._rng.randint(18, 40), self._rng.randint(18, 50), self._rng.randint(225, 255)),
             "font_path": self._rng.choice(self._font_candidates) if self._font_candidates else None,
         }
@@ -266,11 +266,11 @@ class SheetRenderer:
         cell_h = max(12, cell.bottom - cell.top)
         scale = float(writer_style["size_scale"])
         size_boost = float(writer_style["size_boost"])
-        base_size = cell_h * 0.92 * scale
-        target_size = max(15, int(base_size * size_boost))
+        base_size = cell_h * 0.68 * scale
+        target_size = max(11, int(base_size * size_boost))
 
         if self._rng.random() < float(writer_style["overflow_prob"]):
-            target_size = int(target_size * self._rng.uniform(1.08, 1.25))
+            target_size = int(target_size * self._rng.uniform(1.03, 1.12))
 
         preferred = writer_style.get("font_path")
         candidate_paths: list[Path] = []
