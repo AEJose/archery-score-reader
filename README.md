@@ -111,7 +111,7 @@ Current OCR flow is intentionally modular so other agents can replace each layer
 
 1. `score_reader.recognition.ocr_engine.OCREngine`
    - Responsibility: image -> OCR tokens (`text`, `confidence`, `bbox`).
-   - Uses `pytesseract.image_to_data`.
+   - Uses `rapidocr-onnxruntime` (ONNX Runtime backend, Python-installable).
 2. `score_reader.processing.score_sheet_parser.ScoreSheetParser`
    - Responsibility: OCR tokens -> normalized score values -> structured targets/ends/arrows.
    - Current strategy is **layout-agnostic sequential mapping** (first 144 score-like tokens => 4 targets x 36 arrows).
@@ -121,7 +121,7 @@ Current OCR flow is intentionally modular so other agents can replace each layer
 Debug checklist:
 
 - Step 1: Verify OCR backend availability
-  - `python -c "import cv2, pytesseract; print('ok')"`
+  - `python -c "import cv2; from rapidocr_onnxruntime import RapidOCR; print('ok')"`
 - Step 2: Inspect raw OCR tokens
   - Add temporary logging in `OCREngine.run()` to dump tokens and confidence histogram.
 - Step 3: Validate normalization
@@ -134,7 +134,7 @@ Debug checklist:
 Known limitations (important before extending):
 
 - No geometric cell alignment yet (not template-registered).
-- Token order depends on Tesseract traversal order; rotated or complex images can scramble mapping.
+- Token order depends on OCR traversal order; rotated or complex images can scramble mapping.
 - Suitable as baseline for pipeline integration/testing, not final production accuracy.
 
 Recommended next implementation steps:
@@ -295,7 +295,7 @@ TBD
 
 Debug 建議步驟：
 
-- 先確認 OCR 套件可載入：`python -c "import cv2, pytesseract; print('ok')"`
+- 先確認 OCR 套件可載入：`python -c "import cv2; from rapidocr_onnxruntime import RapidOCR; print('ok')"`
 - 在 `OCREngine.run()` 暫時印出 raw token（文字/信心度/bbox）看排序是否合理。
 - 檢查 `_normalize_token()` 對 `O/0`、`x/X`、雜訊符號是否有誤判。
 - 檢查分裝後每個 target 是否真的有 36 箭、每個 end 是否 6 箭。
