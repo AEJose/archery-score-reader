@@ -69,5 +69,26 @@ def debug_visualize(
         typer.echo(f"- {path}")
 
 
+@app.command("analyze-score-sheet")
+def analyze_score_sheet(
+    image: Path = typer.Option(..., exists=True, dir_okay=False, file_okay=True),
+    output_json: Path = typer.Option(..., exists=False, dir_okay=False, file_okay=True),
+    debug_dir: Path = typer.Option(..., exists=False, dir_okay=True, file_okay=False),
+) -> None:
+    """Run recognition and generate debug visualization in one command."""
+    parser = ScoreSheetParser()
+    result = parser.parse(image)
+    output_json.parent.mkdir(parents=True, exist_ok=True)
+    output_json.write_text(json.dumps(result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+
+    visualizer = DebugVisualizer()
+    paths = visualizer.generate(image, debug_dir)
+
+    typer.echo(f"Structured OCR result saved: {output_json}")
+    typer.echo("Debug overlays generated:")
+    for path in paths:
+        typer.echo(f"- {path}")
+
+
 if __name__ == "__main__":
     app()

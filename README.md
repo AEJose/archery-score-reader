@@ -103,6 +103,12 @@ uv run score-reader \
   --num-images 100 \
   --seed 1234
 
+# Analyze one unknown image (recognition JSON + debug visualization)
+uv run score-reader analyze-score-sheet \
+  --image ./your_sheet.jpg \
+  --output-json ./out/result.json \
+  --debug-dir ./out/debug
+
 ```
 
 ### OCR / Structuring Design Notes (for Agents)
@@ -114,7 +120,7 @@ Current OCR flow is intentionally modular so other agents can replace each layer
    - Uses `rapidocr-onnxruntime` (ONNX Runtime backend, Python-installable).
 2. `score_reader.processing.score_sheet_parser.ScoreSheetParser`
    - Responsibility: OCR tokens -> normalized score values -> structured targets/ends/arrows.
-   - Current strategy is **layout-agnostic sequential mapping** (first 144 score-like tokens => 4 targets x 36 arrows).
+   - Current strategy is **geometry-first Pipeline V2** (orientation correction, region/cell detection, per-cell OCR).
 3. `score_reader.cli:read-score-sheet`
    - Responsibility: orchestrate parser and persist JSON output.
 
