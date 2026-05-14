@@ -105,6 +105,44 @@ uv run score-reader \
 
 ```
 
+### OCR / Structuring Design Notes (for Agents)
+
+Current OCR flow is intentionally modular so other agents can replace each layer independently:
+
+1. `score_reader.recognition.ocr_engine.OCREngine`
+   - Responsibility: image -> OCR tokens (`text`, `confidence`, `bbox`).
+   - Uses `pytesseract.image_to_data`.
+2. `score_reader.processing.score_sheet_parser.ScoreSheetParser`
+   - Responsibility: OCR tokens -> normalized score values -> structured targets/ends/arrows.
+   - Current strategy is **layout-agnostic sequential mapping** (first 144 score-like tokens => 4 targets x 36 arrows).
+3. `score_reader.cli:read-score-sheet`
+   - Responsibility: orchestrate parser and persist JSON output.
+
+Debug checklist:
+
+- Step 1: Verify OCR backend availability
+  - `python -c "import cv2, pytesseract; print('ok')"`
+- Step 2: Inspect raw OCR tokens
+  - Add temporary logging in `OCREngine.run()` to dump tokens and confidence histogram.
+- Step 3: Validate normalization
+  - Check `_normalize_token()` behavior for common confusion pairs (`O/0`, lowercase `x`, noisy symbols).
+- Step 4: Validate structural packing
+  - Ensure each target has 36 arrows and each end has 6 arrows; if not, upstream token filtering likely removed too much data.
+- Step 5: Compare with expected totals
+  - Use parser-computed `subtotal` / `total` to detect broken token order.
+
+Known limitations (important before extending):
+
+- No geometric cell alignment yet (not template-registered).
+- Token order depends on Tesseract traversal order; rotated or complex images can scramble mapping.
+- Suitable as baseline for pipeline integration/testing, not final production accuracy.
+
+Recommended next implementation steps:
+
+- Add document orientation correction before OCR.
+- Add template/grid cell extraction and run OCR per-cell instead of whole-page token stream.
+- Add confidence thresholding + review-item export for low-confidence cells.
+
 ### Development
 
 ```bash
@@ -242,6 +280,38 @@ TBD
 - **可擴充修正策略** — 策略模式 + 責任鏈；新增策略無需修改核心管線
 - **可擴充報表匯出** — 新增輸出格式無需修改核心管線
 - **合成資料管線** — 以可配置參數產生增強訓練資料
+
+### OCR 與結構分裝設計（給其他 Agent）
+
+目前流程刻意拆成可替換模組，方便後續 agent 逐層 debug / 重寫：
+
+1. `score_reader.recognition.ocr_engine.OCREngine`
+   - 職責：影像 -> OCR token（文字、信心度、bbox）。
+2. `score_reader.processing.score_sheet_parser.ScoreSheetParser`
+   - 職責：token 正規化後，分裝成 target/end/arrow 結構。
+   - 現行是「不看版面」的序列映射：前 144 個有效分數 token -> 4 靶位 x 36 箭。
+3. `score_reader.cli` 的 `read-score-sheet`
+   - 職責：串接 parser 並輸出 JSON。
+
+Debug 建議步驟：
+
+- 先確認 OCR 套件可載入：`python -c "import cv2, pytesseract; print('ok')"`
+- 在 `OCREngine.run()` 暫時印出 raw token（文字/信心度/bbox）看排序是否合理。
+- 檢查 `_normalize_token()` 對 `O/0`、`x/X`、雜訊符號是否有誤判。
+- 檢查分裝後每個 target 是否真的有 36 箭、每個 end 是否 6 箭。
+- 用 `subtotal/total` 對照人工結果，快速判斷 token 順序是否跑掉。
+
+已知限制（請先理解再擴充）：
+
+- 目前尚未做 template 對位與格線切 cell。
+- 目前依賴 Tesseract token 掃描順序，旋轉/透視/雜訊影像容易錯位。
+- 現版本偏向打通流程，不是最終精度版。
+
+建議下一步：
+
+- 先加方向校正（orientation correction）。
+- 依模板切格後做 per-cell OCR（取代整頁 token 串流）。
+- 新增低信心欄位輸出（review items）給人工複核。
 
 ### 技術棧
 
