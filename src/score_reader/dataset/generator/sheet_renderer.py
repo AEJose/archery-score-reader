@@ -77,6 +77,7 @@ class SheetRenderer:
         return best_cells
 
     def _detect_cells_for_orientation(self, arr: np.ndarray) -> list[list[Cell]]:
+        arr = self._deskew(arr)
         regions = self._detect_target_regions(arr)
         if not regions:
             return []
@@ -173,6 +174,36 @@ class SheetRenderer:
         local_v = [left + x for x in self._merge_lines(v_candidates)]
         local_h = [top + y for y in self._merge_lines(h_candidates)]
         return local_v, local_h
+
+    def _deskew(self, gray: np.ndarray) -> np.ndarray:
+        edges = cv2.Canny(gray, 80, 180)
+        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 120, minLineLength=80, maxLineGap=12)
+        if lines is None:
+            return gray
+
+        angles: list[float] = []
+        for line in lines[:, 0]:
+            x1, y1, x2, y2 = line
+            angle = float(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+            if -45.0 <= angle <= 45.0:
+                angles.append(angle)
+
+        if not angles:
+            return gray
+
+        median_angle = float(np.median(angles))
+        if abs(median_angle) < 0.3:
+            return gray
+
+        h, w = gray.shape
+        matrix = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), median_angle, 1.0)
+        return cv2.warpAffine(
+            gray,
+            matrix,
+            (w, h),
+            flags=cv2.INTER_CUBIC,
+            borderMode=cv2.BORDER_REPLICATE,
+        )
 
     def _build_target_placement(self, cells: list[Cell], target: SyntheticTarget) -> list[tuple[Cell, str]]:
         rows = self._group_cells_by_rows(cells)
