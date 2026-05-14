@@ -52,40 +52,32 @@ class SheetRenderer:
 
     def _detect_cells(self, image: Image.Image) -> list[list[Cell]]:
         gray = image.convert("L")
-        w, h = gray.size
-        arr = np.array(gray)
+        base_arr = np.array(gray)
+        base_h, base_w = base_arr.shape
 
-        # Step 1: Find 4 scoring regions via OpenCV contours
+        best_cells: list[list[Cell]] = []
+        best_score = -1
+        for rot_k in (0, 1, 2, 3):
+            arr = np.rot90(base_arr, k=rot_k)
+            rotated_cells = self._detect_cells_for_orientation(arr)
+            recovered = self._remap_cells_to_original(rotated_cells, base_w, base_h, rot_k)
+            score = sum(len(cells) for cells in recovered)
+            if score > best_score:
+                best_score = score
+                best_cells = recovered
+
+        return best_cells
+
+    def _detect_cells_for_orientation(self, arr: np.ndarray) -> list[list[Cell]]:
         regions = self._detect_target_regions(arr)
-        if len(regions) != 4:
+        if not regions:
             return []
 
-        # Step 2: Find grid lines via dark-pixel scanning
-        px = gray.load()
-
-        dark_cols = []
-        for x in range(w):
-            dark_count = sum(1 for y in range(h) if px[x, y] < 130)
-            if dark_count > h * 0.20:
-                dark_cols.append(x)
-
-        dark_rows = []
-        for y in range(h):
-            dark_count = sum(1 for x in range(w) if px[x, y] < 130)
-            if dark_count > w * 0.20:
-                dark_rows.append(y)
-
-        v_lines = self._merge_lines(dark_cols)
-        h_lines = self._merge_lines(dark_rows)
-        if len(v_lines) < 8 or len(h_lines) < 8:
-            return []
-
-        # Step 3: Build cells per region (preserving region order for
-        # correct alignment with _flatten_values)
         target_cells: list[list[Cell]] = []
         for left, top, right, bottom in regions:
-            local_v = [x for x in v_lines if left <= x <= right]
-            local_h = [y for y in h_lines if top <= y <= bottom]
+            local_v, local_h = self._detect_region_grid_lines(arr, left, top, right, bottom)
+            if len(local_v) < 4 or len(local_h) < 8:
+                continue
 
             region_cells: list[Cell] = []
             for r1, r2 in zip(local_h, local_h[1:]):
@@ -102,6 +94,77 @@ class SheetRenderer:
             target_cells.append(region_cells)
 
         return target_cells
+
+    def _remap_cells_to_original(self, cells_by_target: list[list[Cell]], base_w: int, base_h: int, rot_k: int) -> list[list[Cell]]:
+        if rot_k == 0:
+            return cells_by_target
+
+        remapped: list[list[Cell]] = []
+        for target_cells in cells_by_target:
+            mapped_cells = [self._remap_cell_to_original(cell, base_w, base_h, rot_k) for cell in target_cells]
+            mapped_cells.sort(key=lambda c: (c.top, c.left))
+            remapped.append(mapped_cells)
+        remapped.sort(key=lambda cells: min((cell.left for cell in cells), default=10**9))
+        return remapped
+
+    def _remap_cell_to_original(self, cell: Cell, base_w: int, base_h: int, rot_k: int) -> Cell:
+        points = (
+            (cell.left, cell.top),
+            (cell.right, cell.top),
+            (cell.right, cell.bottom),
+            (cell.left, cell.bottom),
+        )
+
+        mapped = [self._map_point_to_original(x, y, base_w, base_h, rot_k) for x, y in points]
+        xs = [p[0] for p in mapped]
+        ys = [p[1] for p in mapped]
+        return Cell(min(xs), min(ys), max(xs), max(ys))
+
+    def _map_point_to_original(self, x: int, y: int, base_w: int, base_h: int, rot_k: int) -> tuple[int, int]:
+        if rot_k == 1:
+            return y, base_h - 1 - x
+        if rot_k == 2:
+            return base_w - 1 - x, base_h - 1 - y
+        if rot_k == 3:
+            return base_w - 1 - y, x
+        return x, y
+
+    def _detect_region_grid_lines(
+        self,
+        gray: np.ndarray,
+        left: int,
+        top: int,
+        right: int,
+        bottom: int,
+    ) -> tuple[list[int], list[int]]:
+        region = gray[top:bottom, left:right]
+        if region.size == 0:
+            return [], []
+
+        binary = cv2.adaptiveThreshold(
+            region,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV,
+            21,
+            7,
+        )
+
+        h, w = region.shape
+        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(12, h // 16)))
+        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(12, w // 12), 1))
+        vertical = cv2.morphologyEx(binary, cv2.MORPH_OPEN, v_kernel)
+        horizontal = cv2.morphologyEx(binary, cv2.MORPH_OPEN, h_kernel)
+
+        v_proj = vertical.sum(axis=0) / 255
+        h_proj = horizontal.sum(axis=1) / 255
+
+        v_candidates = np.where(v_proj > h * 0.18)[0].tolist()
+        h_candidates = np.where(h_proj > w * 0.22)[0].tolist()
+
+        local_v = [left + x for x in self._merge_lines(v_candidates)]
+        local_h = [top + y for y in self._merge_lines(h_candidates)]
+        return local_v, local_h
 
     def _build_target_placement(self, cells: list[Cell], target: SyntheticTarget) -> list[tuple[Cell, str]]:
         rows = self._group_cells_by_rows(cells)
@@ -157,20 +220,16 @@ class SheetRenderer:
         return rows
 
     def _detect_target_regions(self, gray: np.ndarray) -> list[tuple[int, int, int, int]]:
-        """Detect 4 athlete scoring regions using OpenCV contour detection.
-
-        Uses cv2.findContours + cv2.approxPolyDP to find quadrilateral
-        contours whose bounding-box area is close to 1/8 of the total
-        image area.
-        """
+        """Detect scoring regions using contour and geometry filtering."""
         img_h, img_w = gray.shape
         total_area = img_w * img_h
-        target_area = total_area / 8
-        area_lo = target_area * 0.5
-        area_hi = target_area * 1.5
+        area_lo = total_area * 0.04
+        area_hi = total_area * 0.24
 
         _, binary = cv2.threshold(gray, 130, 255, cv2.THRESH_BINARY_INV)
-        contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=1)
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         regions: list[tuple[int, int, int, int]] = []
         for cnt in contours:
@@ -178,15 +237,40 @@ class SheetRenderer:
             bbox_area = rw * rh
             if not (area_lo <= bbox_area <= area_hi):
                 continue
-            peri = cv2.arcLength(cnt, True)
-            for eps_pct in (0.01, 0.02, 0.03, 0.05, 0.08):
-                approx = cv2.approxPolyDP(cnt, eps_pct * peri, True)
-                if len(approx) <= 6:
-                    regions.append((x, y, x + rw, y + rh))
-                    break
+            aspect = rh / max(rw, 1)
+            if aspect < 1.1:
+                continue
+            fill_ratio = cv2.contourArea(cnt) / max(float(bbox_area), 1.0)
+            if fill_ratio < 0.45:
+                continue
+            regions.append((x, y, x + rw, y + rh))
 
+        regions = self._dedupe_regions(regions)
         regions.sort(key=lambda r: r[0])
         return regions[:4]
+
+    def _dedupe_regions(self, regions: list[tuple[int, int, int, int]]) -> list[tuple[int, int, int, int]]:
+        if not regions:
+            return []
+        regions = sorted(regions, key=lambda r: (r[0], r[1], -(r[2] - r[0]) * (r[3] - r[1])))
+        kept: list[tuple[int, int, int, int]] = []
+        for cand in regions:
+            cx1, cy1, cx2, cy2 = cand
+            c_area = (cx2 - cx1) * (cy2 - cy1)
+            dup = False
+            for kx1, ky1, kx2, ky2 in kept:
+                ix1, iy1 = max(cx1, kx1), max(cy1, ky1)
+                ix2, iy2 = min(cx2, kx2), min(cy2, ky2)
+                if ix2 <= ix1 or iy2 <= iy1:
+                    continue
+                inter = (ix2 - ix1) * (iy2 - iy1)
+                k_area = (kx2 - kx1) * (ky2 - ky1)
+                if inter / max(min(c_area, k_area), 1) > 0.75:
+                    dup = True
+                    break
+            if not dup:
+                kept.append(cand)
+        return kept
 
     def _merge_lines(self, indices: list[int]) -> list[int]:
         if not indices:
