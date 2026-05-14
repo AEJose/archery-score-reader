@@ -184,7 +184,7 @@ class ScoreSheetParser:
     def _classify_arrow_cells(self, rows: list[list[Cell]]) -> list[tuple[int, int, Cell]]:
         scoring_rows = [row for row in rows if len(row) >= 6]
         if len(scoring_rows) > 12:
-            scoring_rows = scoring_rows[-12:]
+            scoring_rows = scoring_rows[:12]
         elif len(scoring_rows) < 12:
             return []
         out: list[tuple[int, int, Cell]] = []
