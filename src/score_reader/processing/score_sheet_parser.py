@@ -126,11 +126,36 @@ class CardRegionProcessor:
         local_h = [top + y for y in self._renderer._merge_lines(h_candidates)]
         return local_v, local_h
 
+    def _select_scoring_rows(self, rows: list[list[Cell]]) -> list[list[Cell]]:
+        candidates = [row for row in rows if len(row) >= 6]
+        if len(candidates) < 12:
+            return []
+        if len(candidates) == 12:
+            return candidates
+
+        def row_score(window: list[list[Cell]]) -> float:
+            # Prefer consistent row heights and stable first-3 cell widths.
+            heights = [r[0].bottom - r[0].top for r in window if r]
+            widths = [r[i].right - r[i].left for r in window for i in range(3)]
+            if not heights or not widths:
+                return -1.0
+            h_var = float(np.std(heights))
+            w_var = float(np.std(widths))
+            return -(h_var + 0.6 * w_var)
+
+        best = candidates[:12]
+        best_score = row_score(best)
+        for i in range(0, len(candidates) - 11):
+            window = candidates[i : i + 12]
+            score = row_score(window)
+            if score > best_score:
+                best = window
+                best_score = score
+        return best
+
     def _classify_arrow_cells(self, rows: list[list[Cell]]) -> list[tuple[int, int, Cell]]:
-        scoring_rows = [row for row in rows if len(row) >= 6]
-        if len(scoring_rows) > 12:
-            scoring_rows = scoring_rows[:12]
-        elif len(scoring_rows) < 12:
+        scoring_rows = self._select_scoring_rows(rows)
+        if len(scoring_rows) < 12:
             return []
         out: list[tuple[int, int, Cell]] = []
         for end_idx in range(6):
@@ -149,7 +174,7 @@ class CardRegionProcessor:
 
     def _ocr_cell(self, crop: np.ndarray) -> tuple[str, float]:
         if crop.size == 0:
-            return "M", 0.0
+            return "0", 0.0
         tokens = self._ocr_engine.run_array(crop)
         best_val, best_conf = "M", 0.0
         for token in tokens:
@@ -158,6 +183,9 @@ class CardRegionProcessor:
                 continue
             if token.confidence >= best_conf:
                 best_val, best_conf = normalized, token.confidence
+        # Low-confidence fallback: avoid forcing a miss (M) when uncertain.
+        if best_conf < 0.35:
+            return "0", best_conf
         return best_val, best_conf
 
 

@@ -57,6 +57,7 @@ def _csv_headers() -> list[str]:
 
 def _target_to_row(sheet: StructuredScoreSheet, target: TargetReading, notes: str) -> dict[str, str | int]:
     values = [a.value for a in target.arrows]
+    low_conf_count = sum(1 for a in target.arrows if a.confidence < 0.35)
     x_count = sum(1 for v in values if v == "X")
     x_plus_10_count = sum(1 for v in values if v in {"X", "10"})
     row: dict[str, str | int] = {
@@ -69,7 +70,7 @@ def _target_to_row(sheet: StructuredScoreSheet, target: TargetReading, notes: st
         "final_total": target.total,
         "x_count": x_count,
         "x_plus_10_count": x_plus_10_count,
-        "notes": notes,
+        "notes": f"{notes} | low_conf_cells={low_conf_count}",
     }
     cumulative = 0
     ends = {e.end_index: e for e in target.ends}
