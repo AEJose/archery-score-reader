@@ -1,0 +1,26 @@
+[
+  {
+    "image_path": "./sample.png",
+    "archers": [
+      {
+        "archer_index": 1,
+        "unit": "Taipei Archery Club",
+        "target_lane": "1",
+        "lane_code": "1A",
+        "name": "LIN, YU-CHEN",
+        "ends": [
+          {"end_index": 1, "upper_3": {"row_type": "upper_3", "arrows": ["10","9","X"], "subtotal": 29}, "lower_3": {"row_type": "lower_3", "arrows": ["9","8","10"], "subtotal": 27}, "end_total": 56, "cumulative_total": 56},
+          {"end_index": 2, "upper_3": {"row_type": "upper_3", "arrows": ["10","10","9"], "subtotal": 29}, "lower_3": {"row_type": "lower_3", "arrows": ["8","9","X"], "subtotal": 27}, "end_total": 56, "cumulative_total": 112},
+          {"end_index": 3, "upper_3": {"row_type": "upper_3", "arrows": ["9","9","9"], "subtotal": 27}, "lower_3": {"row_type": "lower_3", "arrows": ["10","8","9"], "subtotal": 27}, "end_total": 54, "cumulative_total": 166},
+          {"end_index": 4, "upper_3": {"row_type": "upper_3", "arrows": ["10","X","9"], "subtotal": 29}, "lower_3": {"row_type": "lower_3", "arrows": ["10","9","8"], "subtotal": 27}, "end_total": 56, "cumulative_total": 222},
+          {"end_index": 5, "upper_3": {"row_type": "upper_3", "arrows": ["9","8","10"], "subtotal": 27}, "lower_3": {"row_type": "lower_3", "arrows": ["9","9","9"], "subtotal": 27}, "end_total": 54, "cumulative_total": 276},
+          {"end_index": 6, "upper_3": {"row_type": "upper_3", "arrows": ["10","9","9"], "subtotal": 28}, "lower_3": {"row_type": "lower_3", "arrows": ["9","8","9"], "subtotal": 26}, "end_total": 54, "cumulative_total": 330}
+        ],
+        "final_total": 330,
+        "x_count": 3,
+        "x_plus_10_count": 11
+      }
+    ],
+    "notes": ["selected_rotation=0", "sample output for review"]
+  }
+]
