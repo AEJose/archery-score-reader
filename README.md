@@ -155,7 +155,10 @@ Recommended next implementation steps:
 # Install with dev dependencies
 uv sync --extra dev
 
-# Run tests
+# Run all unit tests (one command)
+uv run pytest -q tests/unit
+
+# Run full test suite
 uv run pytest
 
 # Lint

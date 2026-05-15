@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from score_reader.processing.score_sheet_parser import ScoreSheetParser
+from score_reader.processing.score_sheet_parser import CardRegionProcessor, ScoreSheetParser
 from score_reader.dataset.generator.sheet_renderer import Cell
 from score_reader.recognition.models import OCRToken
 
@@ -25,13 +25,13 @@ def test_parser_builds_structured_targets() -> None:
 
 
 def test_classify_arrow_cells_uses_top_scoring_rows() -> None:
-    parser = ScoreSheetParser(ocr_engine=FakeOCREngine())
+    processor = CardRegionProcessor(renderer=ScoreSheetParser()._renderer, ocr_engine=FakeOCREngine())
 
     rows = []
     for row_idx in range(14):
         rows.append([Cell(col * 10, row_idx * 10, col * 10 + 8, row_idx * 10 + 8) for col in range(6)])
 
-    arrow_cells = parser._classify_arrow_cells(rows)
+    arrow_cells = processor._classify_arrow_cells(rows)
 
     assert len(arrow_cells) == 36
     assert arrow_cells[0] == (1, 1, rows[0][0])

@@ -18,6 +18,175 @@ class PipelineArtifacts:
     target_regions: list[tuple[int, int, int, int]]
     target_rows: list[list[list[Cell]]]
     arrow_cells: list[list[tuple[int, int, Cell]]]
+    score_tables: list[tuple[int, int, int, int]]
+
+
+@dataclass
+class CardProcessingResult:
+    rows: list[list[Cell]]
+    arrow_cells: list[tuple[int, int, Cell]]
+    arrows: list[ArrowReading]
+    score_table_bbox: tuple[int, int, int, int]
+
+
+class CardRegionProcessor:
+    def __init__(self, renderer: SheetRenderer, ocr_engine: OCREngine) -> None:
+        self._renderer = renderer
+        self._ocr_engine = ocr_engine
+
+    def process(self, gray: np.ndarray, region: tuple[int, int, int, int]) -> CardProcessingResult:
+        left, top, right, bottom = region
+        card_gray = gray[top:bottom, left:right]
+        card_gray = self._normalize_card_orientation(card_gray)
+        table_l, table_t, table_r, table_b = self._detect_score_table_bbox(card_gray)
+        cells = self._detect_cells(card_gray, table_l, table_t, table_r, table_b)
+        rows = self._renderer._group_cells_by_rows(cells)
+        arrow_cells = self._classify_arrow_cells(rows)
+        arrows = self._read_arrows(card_gray, arrow_cells)
+        return CardProcessingResult(
+            rows=rows,
+            arrow_cells=arrow_cells,
+            arrows=arrows,
+            score_table_bbox=(left + table_l, top + table_t, left + table_r, top + table_b),
+        )
+
+    def _read_arrows(self, card_gray: np.ndarray, arrow_cells: list[tuple[int, int, Cell]]) -> list[ArrowReading]:
+        card_bgr = cv2.cvtColor(card_gray, cv2.COLOR_GRAY2BGR)
+        arrows: list[ArrowReading] = []
+        for end_idx, arrow_idx, cell in arrow_cells:
+            crop = self._crop_cell(card_bgr, cell, 2)
+            value, conf = self._ocr_cell(crop)
+            arrows.append(ArrowReading(arrow_index=(end_idx - 1) * 6 + arrow_idx, value=value, confidence=conf))
+        return arrows
+
+    def _normalize_card_orientation(self, card_gray: np.ndarray) -> np.ndarray:
+        best = card_gray
+        best_score = -1.0
+        for k in (0, 1, 2, 3):
+            candidate = np.rot90(card_gray, k=k).copy()
+            h, w = candidate.shape
+            if h < 50 or w < 50:
+                continue
+            v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(8, h // 24)))
+            h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(8, w // 18), 1))
+            binary = cv2.adaptiveThreshold(candidate, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 5)
+            vertical = cv2.morphologyEx(binary, cv2.MORPH_OPEN, v_kernel)
+            horizontal = cv2.morphologyEx(binary, cv2.MORPH_OPEN, h_kernel)
+            score = float(vertical.sum() + horizontal.sum())
+            if score > best_score:
+                best = candidate
+                best_score = score
+        return best
+
+    def _detect_score_table_bbox(self, card_gray: np.ndarray) -> tuple[int, int, int, int]:
+        h, w = card_gray.shape
+        binary = cv2.adaptiveThreshold(card_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 5)
+        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(8, h // 24)))
+        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(8, w // 18), 1))
+        vertical = cv2.morphologyEx(binary, cv2.MORPH_OPEN, v_kernel)
+        horizontal = cv2.morphologyEx(binary, cv2.MORPH_OPEN, h_kernel)
+        grid = cv2.bitwise_or(vertical, horizontal)
+        contours, _ = cv2.findContours(grid, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return int(w * 0.12), int(h * 0.2), int(w * 0.96), int(h * 0.88)
+        x, y, cw, ch = max((cv2.boundingRect(c) for c in contours), key=lambda b: b[2] * b[3])
+        pad_x = max(4, cw // 40)
+        pad_y = max(4, ch // 40)
+        return max(0, x - pad_x), max(0, y - pad_y), min(w, x + cw + pad_x), min(h, y + ch + pad_y)
+
+    def _detect_cells(self, gray: np.ndarray, left: int, top: int, right: int, bottom: int) -> list[Cell]:
+        local_v, local_h = self._renderer._detect_region_grid_lines(gray, left, top, right, bottom)
+        if len(local_v) < 5 or len(local_h) < 10:
+            local_v, local_h = self._fallback_detect_lines(gray, left, top, right, bottom)
+        cells: list[Cell] = []
+        for r1, r2 in zip(local_h, local_h[1:]):
+            for c1, c2 in zip(local_v, local_v[1:]):
+                if r2 - r1 < 12 or c2 - c1 < 12:
+                    continue
+                cells.append(Cell(c1 + 2, r1 + 2, c2 - 2, r2 - 2))
+        return cells
+
+    def _fallback_detect_lines(self, gray: np.ndarray, left: int, top: int, right: int, bottom: int) -> tuple[list[int], list[int]]:
+        region = gray[top:bottom, left:right]
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8)).apply(region)
+        merged = np.zeros_like(region)
+        for block, c in ((15, 3), (21, 6), (31, 9)):
+            b = cv2.adaptiveThreshold(clahe, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, block, c)
+            merged = cv2.bitwise_or(merged, b)
+        h, w = region.shape
+        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(8, h // 20)))
+        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(8, w // 16), 1))
+        vertical = cv2.morphologyEx(merged, cv2.MORPH_OPEN, v_kernel)
+        horizontal = cv2.morphologyEx(merged, cv2.MORPH_OPEN, h_kernel)
+        v_proj = vertical.sum(axis=0) / 255
+        h_proj = horizontal.sum(axis=1) / 255
+        v_candidates = np.where(v_proj > h * 0.12)[0].tolist()
+        h_candidates = np.where(h_proj > w * 0.15)[0].tolist()
+        local_v = [left + x for x in self._renderer._merge_lines(v_candidates)]
+        local_h = [top + y for y in self._renderer._merge_lines(h_candidates)]
+        return local_v, local_h
+
+    def _select_scoring_rows(self, rows: list[list[Cell]]) -> list[list[Cell]]:
+        candidates = [row for row in rows if len(row) >= 6]
+        if len(candidates) < 12:
+            return []
+        if len(candidates) == 12:
+            return candidates
+
+        def row_score(window: list[list[Cell]]) -> float:
+            # Prefer consistent row heights and stable first-3 cell widths.
+            heights = [r[0].bottom - r[0].top for r in window if r]
+            widths = [r[i].right - r[i].left for r in window for i in range(3)]
+            if not heights or not widths:
+                return -1.0
+            h_var = float(np.std(heights))
+            w_var = float(np.std(widths))
+            return -(h_var + 0.6 * w_var)
+
+        best = candidates[:12]
+        best_score = row_score(best)
+        for i in range(0, len(candidates) - 11):
+            window = candidates[i : i + 12]
+            score = row_score(window)
+            if score > best_score:
+                best = window
+                best_score = score
+        return best
+
+    def _classify_arrow_cells(self, rows: list[list[Cell]]) -> list[tuple[int, int, Cell]]:
+        scoring_rows = self._select_scoring_rows(rows)
+        if len(scoring_rows) < 12:
+            return []
+        out: list[tuple[int, int, Cell]] = []
+        for end_idx in range(6):
+            row_a = scoring_rows[end_idx * 2]
+            row_b = scoring_rows[end_idx * 2 + 1]
+            for i in range(3):
+                out.append((end_idx + 1, i + 1, row_a[i]))
+                out.append((end_idx + 1, i + 4, row_b[i]))
+        return out
+
+    def _crop_cell(self, image: np.ndarray, cell: Cell, pad: int) -> np.ndarray:
+        h, w = image.shape[:2]
+        l, t = max(0, cell.left - pad), max(0, cell.top - pad)
+        r, b = min(w, cell.right + pad), min(h, cell.bottom + pad)
+        return image[t:b, l:r]
+
+    def _ocr_cell(self, crop: np.ndarray) -> tuple[str, float]:
+        if crop.size == 0:
+            return "0", 0.0
+        tokens = self._ocr_engine.run_array(crop)
+        best_val, best_conf = "M", 0.0
+        for token in tokens:
+            normalized = _normalize_token(token.text)
+            if normalized is None:
+                continue
+            if token.confidence >= best_conf:
+                best_val, best_conf = normalized, token.confidence
+        # Low-confidence fallback: avoid forcing a miss (M) when uncertain.
+        if best_conf < 0.35:
+            return "0", best_conf
+        return best_val, best_conf
 
 
 def _normalize_token(token: str) -> str | None:
@@ -50,6 +219,7 @@ class ScoreSheetParser:
     def __init__(self, ocr_engine: OCREngine | None = None) -> None:
         self.ocr_engine = ocr_engine or OCREngine()
         self._renderer = SheetRenderer()
+        self._card_processor = CardRegionProcessor(self._renderer, self.ocr_engine)
 
     def parse(self, image_path: Path) -> StructuredScoreSheet:
         parsed, _ = self.parse_with_artifacts(image_path)
@@ -66,18 +236,15 @@ class ScoreSheetParser:
 
         target_rows: list[list[list[Cell]]] = []
         target_arrow_cells: list[list[tuple[int, int, Cell]]] = []
+        score_tables: list[tuple[int, int, int, int]] = []
         targets: list[TargetReading] = []
 
         for target_idx, (left, top, right, bottom) in enumerate(regions[:4], start=1):
-            cells = self._detect_cells(gray, left, top, right, bottom)
-            rows = self._group_cells_by_rows(cells)
-            arrow_cells = self._classify_arrow_cells(rows)
-
-            arrows: list[ArrowReading] = []
-            for end_idx, arrow_idx, cell in arrow_cells:
-                crop = self._crop_cell(corrected, cell, 2)
-                value, conf = self._ocr_cell(crop)
-                arrows.append(ArrowReading(arrow_index=(end_idx - 1) * 6 + arrow_idx, value=value, confidence=conf))
+            card_result = self._card_processor.process(gray, (left, top, right, bottom))
+            rows = card_result.rows
+            arrow_cells = card_result.arrow_cells
+            arrows = card_result.arrows
+            score_tables.append(card_result.score_table_bbox)
 
             ends: list[EndReading] = []
             for end_idx in range(1, 7):
@@ -97,7 +264,7 @@ class ScoreSheetParser:
             targets.append(TargetReading(target_index=idx, arrows=[], ends=[EndReading(end_index=i) for i in range(1, 7)], total=0))
 
         result = StructuredScoreSheet(image_path=str(image_path), targets=targets, raw_tokens=[])
-        artifacts = PipelineArtifacts(corrected, regions[:4], target_rows, target_arrow_cells)
+        artifacts = PipelineArtifacts(corrected, regions[:4], target_rows, target_arrow_cells, score_tables)
         return result, artifacts
 
     def _correct_image(self, image: np.ndarray) -> np.ndarray:
@@ -145,72 +312,3 @@ class ScoreSheetParser:
         s = pts.sum(axis=1)
         diff = np.diff(pts, axis=1)
         return np.array([pts[np.argmin(s)], pts[np.argmin(diff)], pts[np.argmax(s)], pts[np.argmax(diff)]], dtype=np.float32)
-
-    def _detect_cells(self, gray: np.ndarray, left: int, top: int, right: int, bottom: int) -> list[Cell]:
-        local_v, local_h = self._renderer._detect_region_grid_lines(gray, left, top, right, bottom)
-        if len(local_v) < 5 or len(local_h) < 10:
-            local_v, local_h = self._fallback_detect_lines(gray, left, top, right, bottom)
-        cells: list[Cell] = []
-        for r1, r2 in zip(local_h, local_h[1:]):
-            for c1, c2 in zip(local_v, local_v[1:]):
-                if r2 - r1 < 12 or c2 - c1 < 12:
-                    continue
-                cells.append(Cell(c1 + 2, r1 + 2, c2 - 2, r2 - 2))
-        return cells
-
-    def _fallback_detect_lines(self, gray: np.ndarray, left: int, top: int, right: int, bottom: int) -> tuple[list[int], list[int]]:
-        region = gray[top:bottom, left:right]
-        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8)).apply(region)
-        merged = np.zeros_like(region)
-        for block, c in ((15, 3), (21, 6), (31, 9)):
-            b = cv2.adaptiveThreshold(clahe, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, block, c)
-            merged = cv2.bitwise_or(merged, b)
-        h, w = region.shape
-        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(8, h // 20)))
-        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(8, w // 16), 1))
-        vertical = cv2.morphologyEx(merged, cv2.MORPH_OPEN, v_kernel)
-        horizontal = cv2.morphologyEx(merged, cv2.MORPH_OPEN, h_kernel)
-        v_proj = vertical.sum(axis=0) / 255
-        h_proj = horizontal.sum(axis=1) / 255
-        v_candidates = np.where(v_proj > h * 0.12)[0].tolist()
-        h_candidates = np.where(h_proj > w * 0.15)[0].tolist()
-        local_v = [left + x for x in self._renderer._merge_lines(v_candidates)]
-        local_h = [top + y for y in self._renderer._merge_lines(h_candidates)]
-        return local_v, local_h
-
-    def _group_cells_by_rows(self, cells: list[Cell]) -> list[list[Cell]]:
-        return self._renderer._group_cells_by_rows(cells)
-
-    def _classify_arrow_cells(self, rows: list[list[Cell]]) -> list[tuple[int, int, Cell]]:
-        scoring_rows = [row for row in rows if len(row) >= 6]
-        if len(scoring_rows) > 12:
-            scoring_rows = scoring_rows[:12]
-        elif len(scoring_rows) < 12:
-            return []
-        out: list[tuple[int, int, Cell]] = []
-        for end_idx in range(6):
-            row_a = scoring_rows[end_idx * 2]
-            row_b = scoring_rows[end_idx * 2 + 1]
-            for i in range(3):
-                out.append((end_idx + 1, i + 1, row_a[i]))
-                out.append((end_idx + 1, i + 4, row_b[i]))
-        return out
-
-    def _crop_cell(self, image: np.ndarray, cell: Cell, pad: int) -> np.ndarray:
-        h, w = image.shape[:2]
-        l, t = max(0, cell.left - pad), max(0, cell.top - pad)
-        r, b = min(w, cell.right + pad), min(h, cell.bottom + pad)
-        return image[t:b, l:r]
-
-    def _ocr_cell(self, crop: np.ndarray) -> tuple[str, float]:
-        if crop.size == 0:
-            return "M", 0.0
-        tokens = self.ocr_engine.run_array(crop)
-        best_val, best_conf = "M", 0.0
-        for token in tokens:
-            normalized = _normalize_token(token.text)
-            if normalized is None:
-                continue
-            if token.confidence >= best_conf:
-                best_val, best_conf = normalized, token.confidence
-        return best_val, best_conf
